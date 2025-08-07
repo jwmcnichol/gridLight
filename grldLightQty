@@ -1,0 +1,114 @@
+import sys
+import string
+from threading import Thread
+from pynput import keyboard
+from PyQt6.QtCore import Qt, QPoint, QTimer
+from PyQt6.QtGui import QPainter, QColor, QFont
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget
+
+
+movement_labels = [
+    "SB (RT)", "SB (THRU)", "SB (LT)", "SB (PED)",
+    "WB (RT)", "WB (THRU)", "WB (LT)", "WB (PED)",
+    "NB (RT)", "NB (THRU)", "NB (LT)", "NB (PED)",
+    "EB (RT)", "EB (THRU)", "EB (LT)", "EB (PED)"
+]
+function_labels = ["MENU", "BIKE", "HEAVY", "DELETE"]
+all_labels = movement_labels + function_labels
+keys = list(string.ascii_uppercase[:len(all_labels)])
+
+key_bindings = dict(zip(keys, all_labels))       # A → label
+label_to_key = {v: k for k, v in key_bindings.items()}  # label → A
+
+
+class Tile(QWidget):
+    def __init__(self, label_text: str, key: str, parent=None):
+        super().__init__(parent)
+        self.label_text = label_text
+        self.key = key
+        self.highlighted = False
+        self.setFixedSize(140, 60)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setMouseTracking(True)
+        self.dragging = False
+        self.offset = QPoint(0, 0)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = QColor(255, 255, 160) if self.highlighted else QColor(50, 50, 50, 230)
+        painter.setBrush(color)
+        painter.setPen(QColor(180, 180, 180))
+        painter.drawRoundedRect(self.rect(), 10, 10)
+
+        painter.setPen(QColor(0, 0, 0) if self.highlighted else QColor(230, 230, 230))
+        font = QFont("Sans", 10)
+        painter.setFont(font)
+        painter.drawText(self.rect().adjusted(8, 5, -8, -25), Qt.AlignmentFlag.AlignLeft, f"[{self.key}]")
+        painter.drawText(self.rect().adjusted(8, 25, -8, -5), Qt.AlignmentFlag.AlignLeft, self.label_text)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.dragging = True
+            self.offset = event.pos()
+
+    def mouseMoveEvent(self, event):
+        if self.dragging:
+            self.move(self.pos() + event.pos() - self.offset)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.dragging = False
+
+    def flash(self):
+        self.highlighted = True
+        self.update()
+        QTimer.singleShot(300, self.unflash)
+
+    def unflash(self):
+        self.highlighted = False
+        self.update()
+
+
+class OverlayWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Tool
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setGeometry(100, 100, 1000, 600)
+
+        self.tiles: dict[str, Tile] = {}
+        self.init_tiles()
+        self.start_global_key_listener()
+        self.show()
+
+    def init_tiles(self):
+        start_x, start_y = 40, 40
+        for i, (key, label) in enumerate(key_bindings.items()):
+            tile = Tile(label_text=label, key=key, parent=self)
+            tile.move(start_x + (i % 6) * 160, start_y + (i // 6) * 80)
+            tile.show()
+            self.tiles[key] = tile
+
+    def start_global_key_listener(self):
+        def on_press(key):
+            try:
+                char = key.char.upper()
+                if char in self.tiles:
+                    self.tiles[char].flash()
+                    print(f"[{char}] → {self.tiles[char].label_text}")
+            except AttributeError:
+                pass  # special keys like shift, ctrl, etc.
+
+        listener = keyboard.Listener(on_press=on_press)
+        listener.start()
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+    overlay = OverlayWindow()
+    sys.exit(app.exec())
